@@ -12,6 +12,25 @@ from sklearn.datasets import fetch_lfw_people
 
 from SpatialPyramidPooling import SpatialPyramidPooling
 
+def rgb2ycc(img_rgb):
+    """
+    Takes as input a RGB image and convert it to Y Cb Cr space. Shape: channels first.
+    """
+    output = np.zeros(np.shape(img_rgb))
+    output[0, :, :] = 0.299 * img_rgb[0, :, :] + 0.587 * img_rgb[1, :, :] + 0.114 * img_rgb[2, :, :]
+    output[1, :, :] = -0.1687 * img_rgb[0, :, :] - 0.3313 * img_rgb[1, :, :] + 0.5 * img_rgb[2, :, :] + 128
+    output[2, :, :] = 0.5 * img_rgb[0, :, :] - 0.4187 * img_rgb[1, :, :] + 0.0813 * img_rgb[2, :, :] + 128
+    return output
+
+
+def rgb2gray(img_rgb):
+    """
+    Transform a RGB image into a grayscale one using weighted method. Shape: channels first.
+    """
+    output = np.zeros((1, img_rgb.shape[1], img_rgb.shape[2]))
+    output[0, :, :] = 0.3 * img_rgb[0, :, :] + 0.59 * img_rgb[1, :, :] + 0.11 * img_rgb[2, :, :]
+    return output
+
 def InceptionBlock(filters_in, filters_out):
     input_layer = Input(shape=(filters_in, 256, 256))
     tower_filters = int(filters_out / 4)
@@ -41,16 +60,16 @@ def InceptionBlock(filters_in, filters_out):
 class BaseModel(object):
     def __init__(self):
         # Inputs design
-        self.cover_input = Input(shape=(3, 256, 256), name='cover_img')   # cover in YCbCr
-        self.secret_input = Input(shape=(1, 256, 256), name='secret_img') # secret in grayscale
+        # cover_input = Input(shape=(3, 256, 256), name='cover_img')   # cover in YCbCr
+        secret_input = Input(shape=(1, 256, 256), name='secret_img') # secret in grayscale
 
-        # self.cover_Y = Reshape((1, self.cover_input.shape[2], self.cover_input.shape[3]))(self.cover_input[:,0,:,:])
-        self.cover_Y = Input(shape=(1, 256, 256), name='cover_img_Y')
+        # cover_Y = Reshape((1, cover_input.shape[2], cover_input.shape[3]))(cover_input[:,0,:,:])
+        cover_Y = Input(shape=(1, 256, 256), name='cover_img_Y')
 
-        self.combined_input = keras.layers.concatenate([self.cover_Y, self.secret_input], axis=1)
+        combined_input = keras.layers.concatenate([cover_Y, secret_input], axis=1)
 
         # Encoder
-        L1 = Conv2D(16, 3, padding='same')(self.combined_input)
+        L1 = Conv2D(16, 3, padding='same')(combined_input)
         L1 = BatchNormalization(momentum=0.9)(L1)
         L1 = LeakyReLU(alpha=0.2)(L1)
 
@@ -67,7 +86,7 @@ class BaseModel(object):
         L9 = LeakyReLU(alpha=0.2)(L9)
 
         enc_Y_output = Conv2D(1, 1, padding='same', activation='tanh', name="enc_Y_output")(L9)
-        # enc_output = keras.layers.concatenate([enc_Y_output, Reshape((2, self.cover_input.shape[2], self.cover_input.shape[3]))(self.cover_input[:, 1:, :, :])], axis=1)
+        # enc_output = keras.layers.concatenate([enc_Y_output, Reshape((2, cover_input.shape[2], cover_input.shape[3]))(cover_input[:, 1:, :, :])], axis=1)
 
         print("Enc_Y_output shape: ", enc_Y_output.shape)
         # print("Enc_output shape: ", enc_output.shape)
@@ -99,7 +118,7 @@ class BaseModel(object):
         print ("dec_output_shape: ", dec_output.shape)
 
         # Build model
-        self.model = Model(inputs=[self.cover_Y, self.secret_input], outputs=[enc_Y_output, dec_output])
+        self.model = Model(inputs=[cover_Y, secret_input], outputs=[enc_Y_output, dec_output])
         self.model.summary()
 
         # Compile model
@@ -107,10 +126,38 @@ class BaseModel(object):
                       loss={'enc_Y_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
                       loss_weights={'enc_Y_output': 0.5, 'dec_output': 0.5})
         
+    def train(self, epochs, batch_size=4):
+        # Load the LFW dataset
+        print("Loading the dataset: this step can take a few minutes.")
+        # lfw_people = fetch_lfw_people(color=True, resize=1.0, slice_=(slice(0, 250), slice(0, 250)))
+        lfw_people = fetch_lfw_people(color=True, resize=1.0, slice_=(slice(0, 250), slice(0, 250)), min_faces_per_person=10)
+        images_rgb = lfw_people.images
+        images_rgb = np.moveaxis(images_rgb, -1, 1)
 
+        # Zero pad them to get 256 x 256 inputs
+        images_rgb = np.pad(images_rgb, ((0,0), (0,0), (3,3), (3,3)), 'constant')
+
+        # Convert images from RGB to YCbCr and from RGB to grayscale
+        images_ycc = np.zeros(images_rgb.shape)
+        images_gray = np.zeros((images_rgb.shape[0], 1, images_rgb.shape[2], images_rgb.shape[3]))
+        for k in range(images_rgb.shape[0]):
+            images_ycc[k, :, :, :] = rgb2ycc(images_rgb[k, :, :, :])
+            images_gray[k, 0, :, :] = rgb2gray(images_rgb[k, :, :, :])
+
+        # Rescale to [-1, 1]
+        X_train_ycc = (images_ycc.astype(np.float32) - 127.5) / 127.5
+        X_train_gray = (images_gray.astype(np.float32) - 127.5) / 127.5
+
+        X_train_y = np.expand_dims(X_train_ycc[:, 0, :, :], axis=1)
+
+        self.model.fit({'cover_img_Y': X_train_y, 'secret_img': X_train_gray}, \
+                       {'enc_Y_output': X_train_y, 'dec_output': X_train_gray}, \
+                       epochs=epochs, batch_size=batch_size, verbose=2)
+            
 
 
 
 
 if __name__ == "__main__":
     model = BaseModel()
+    model.train(epochs=30)
