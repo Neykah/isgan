@@ -40,7 +40,6 @@ def InceptionBlock(filters_in, filters_out):
 
 class BaseModel(object):
     def __init__(self):
-
         # Inputs design
         self.cover_input = Input(shape=(3, 256, 256), name='cover_img')   # cover in YCbCr
         self.secret_input = Input(shape=(1, 256, 256), name='secret_img') # secret in grayscale
@@ -95,13 +94,22 @@ class BaseModel(object):
         L5 = BatchNormalization(momentum=0.9)(L5)
         L5 = LeakyReLU(alpha=0.2)(L5)
 
-        dec_output = Conv2D(1, 1, padding='same', activation='sigmoid')(L5)
+        dec_output = Conv2D(1, 1, padding='same', activation='sigmoid', name="dec_output")(L5)
 
         print ("dec_output_shape: ", dec_output.shape)
 
         # Build model
-        model = Model(inputs=[self.cover_Y, self.secret_input], outputs=[enc_Y_output, dec_output])
-        model.summary()
+        self.model = Model(inputs=[self.cover_Y, self.secret_input], outputs=[enc_Y_output, dec_output])
+        self.model.summary()
+
+        # Compile model
+        self.model.compile(optimizer="adam", \
+                      loss={'enc_Y_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
+                      loss_weights={'enc_Y_output': 0.5, 'dec_output': 0.5})
+        
+
+
+
 
 
 if __name__ == "__main__":
