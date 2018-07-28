@@ -1,33 +1,43 @@
 import numpy as np
 
 from keras.models import Model
-from keras.layers import Conv2D, Input, Reshape, Lambda
+from keras.layers import Conv2D, Input, AveragePooling2D, Dense, Reshape, Lambda
 from keras.layers import LeakyReLU
 from keras.layers import BatchNormalization
 import keras.layers
 from sklearn.datasets import fetch_lfw_people
+from SpatialPyramidPooling import SpatialPyramidPooling
 
 from utils import InceptionBlock, rgb2gray, rgb2ycc, paper_loss
 
-class BaseModel(object):
+class ISGAN(object):
     def __init__(self):
-        # Generate model
-        self.model = self.set_model()
+        # Generate base model
+        self.base_model = self.set_base_model()
 
-        # Compile model
+        # Compile base model
         # With MSE:
-        # self.model.compile(optimizer="adam", \
+        # self.base_model.compile(optimizer="adam", \
         #   loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
         #   loss_weights={'enc_output': 0.5, 'dec_output': 0.5})
 
         # Or with custom loss:
         custom_loss = paper_loss(alpha=0.5, beta=0.3)
         gamma = 0.85
-        self.model.compile(optimizer="adam", \
+        self.base_model.compile(optimizer="adam", \
                       loss={'enc_output': custom_loss, 'dec_output': custom_loss}, \
                       loss_weights={'enc_output': 1, 'dec_output': gamma})
 
-    def set_model(self):
+        # Generate discriminator model
+        self.discriminator = self.set_discriminator()
+
+        # Compile discriminator
+        self.discriminator.compile(optimizer='adam', loss='binary_crossentropy')
+
+        # Generate adversarial model
+        self.adversarial = self.set_adversarial()
+
+    def set_base_model(self):
         # Inputs design
         cover_input = Input(shape=(3, 256, 256), name='cover_img')   # cover in YCbCr
         secret_input = Input(shape=(1, 256, 256), name='secret_img') # secret in grayscale
@@ -96,8 +106,46 @@ class BaseModel(object):
 
         model = Model(inputs=[cover_input, secret_input], outputs=[enc_output, dec_output])
         model.summary()
+
+    def set_discriminator(self):
+        img_input = Input(shape=(3, 256, 256), name='discrimator_input')
+        L1 = Conv2D(8, 3, padding='same')(img_input)
+        L1 = BatchNormalization(momentum=0.9)(L1)
+        L1 = LeakyReLU(alpha=0.2)(L1)
+        L1 = AveragePooling2D(pool_size=5, strides=2, padding='same')(L1)
+
+        L2 = Conv2D(16, 3, padding='same')(L1)
+        L2 = BatchNormalization(momentum=0.9)(L2)
+        L2 = LeakyReLU(alpha=0.2)(L2)
+        L2 = AveragePooling2D(pool_size=5, strides=2, padding='same')(L2)
+
+        L3 = Conv2D(32, 1, padding='valid')(L2)
+        L3 = BatchNormalization(momentum=0.9)(L3)
+        L3 = AveragePooling2D(pool_size=5, strides=2, padding='same')(L3)
+
+        L4 = Conv2D(64, 1, padding='valid')(L3)
+        L4 = BatchNormalization(momentum=0.9)(L4)
+        L4 = AveragePooling2D(pool_size=5, strides=2, padding='same')(L4)
+
+        L5 = Conv2D(128, 3, padding='same')(L4)
+        L5 = BatchNormalization(momentum=0.9)(L5)
+        L5 = LeakyReLU(alpha=0.2)(L5)
+        L5 = AveragePooling2D(pool_size=5, strides=2, padding='same')(L5)
+
+        L6 = SpatialPyramidPooling([1, 2, 4])(L5)
+        L7 = Dense(128)(L6)
+        L8 = Dense(1, activation='tanh', name="D_output")(L7)
+
+        discriminator = Model(inputs=img_input, outputs=L8)
+        discriminator.summary()
+
+        return discriminator
+
+    def set_adversarial(self):
+        self.discriminator.trainable = False
         
-    def train(self, epochs, batch_size=4):
+        
+    def train_base_model(self, epochs, batch_size=4):
         # Load the LFW dataset
         print("Loading the dataset: this step can take a few minutes.")
         # Complete LFW dataset
@@ -130,11 +178,11 @@ class BaseModel(object):
 
         callback = keras.callbacks.ModelCheckpoint(\
                    "base_model/weights.{epoch:02d}-{val_loss:.2f}.hdf5", period=1)
-        self.model.fit({'cover_img_Y': X_train_y, 'secret_img': X_train_gray}, \
+        self.base_model.fit({'cover_img_Y': X_train_y, 'secret_img': X_train_gray}, \
                        {'enc_Y_output': X_train_y, 'dec_output': X_train_gray}, \
                        epochs=epochs, batch_size=batch_size, verbose=2, callbacks=[callback])
             
 
 if __name__ == "__main__":
-    model = BaseModel()
-    model.train(epochs=30)
+    model = ISGAN()
+    model.train_base_model(epochs=30)
