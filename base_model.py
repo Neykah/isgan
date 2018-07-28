@@ -16,16 +16,16 @@ class BaseModel(object):
 
         # Compile model
         # With MSE:
-        # self.model.compile(optimizer="adam", \
-        #   loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
-        #   loss_weights={'enc_output': 0.5, 'dec_output': 0.5})
+        self.model.compile(optimizer="adam", \
+          loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
+          loss_weights={'enc_output': 0.5, 'dec_output': 0.5})
 
         # Or with custom loss:
-        custom_loss = paper_loss(alpha=0.5, beta=0.3)
-        gamma = 0.85
-        self.model.compile(optimizer="adam", \
-                      loss={'enc_output': custom_loss, 'dec_output': custom_loss}, \
-                      loss_weights={'enc_output': 1, 'dec_output': gamma})
+        # custom_loss = paper_loss(alpha=0.5, beta=0.3)
+        # gamma = 0.85
+        # self.model.compile(optimizer="adam", \
+        #               loss={'enc_output': custom_loss, 'dec_output': custom_loss}, \
+        #               loss_weights={'enc_output': 1, 'dec_output': gamma})
 
     def set_model(self):
         # Inputs design
@@ -96,6 +96,7 @@ class BaseModel(object):
 
         model = Model(inputs=[cover_input, secret_input], outputs=[enc_output, dec_output])
         model.summary()
+        return model
         
     def train(self, epochs, batch_size=4):
         # Load the LFW dataset
@@ -126,12 +127,10 @@ class BaseModel(object):
         X_train_ycc = (images_ycc.astype(np.float32) - 127.5) / 127.5
         X_train_gray = (images_gray.astype(np.float32) - 127.5) / 127.5
 
-        X_train_y = np.expand_dims(X_train_ycc[:, 0, :, :], axis=1)
-
         callback = keras.callbacks.ModelCheckpoint(\
                    "base_model/weights.{epoch:02d}-{val_loss:.2f}.hdf5", period=1)
-        self.model.fit({'cover_img_Y': X_train_y, 'secret_img': X_train_gray}, \
-                       {'enc_Y_output': X_train_y, 'dec_output': X_train_gray}, \
+        self.model.fit({'cover_img': X_train_ycc, 'secret_img': X_train_gray}, \
+                       {'enc_output': X_train_ycc, 'dec_output': X_train_gray}, \
                        epochs=epochs, batch_size=batch_size, verbose=2, callbacks=[callback])
             
 
