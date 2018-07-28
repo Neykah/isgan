@@ -7,14 +7,17 @@ import keras.layers
 
 # Utility functions for computing losses
 
+# Luminance
 def L(x, y, C1=1):
     mu_x, mu_y = np.mean(x), np.mean(y)
     return (2 * mu_x * mu_y + C1) / (mu_x**2 + mu_y**2 + C1)
 
+# Contrast
 def C(x, y, C2=1):
     theta_x, theta_y = np.std(x), np.std(y)
     return (2 * theta_x * theta_y + C2) / (theta_x**2 + theta_y**2 + C2)
 
+# Structure
 def S(x, y, C3=1):
     theta_x, theta_y, theta_xy = np.std(x), np.std(y), np.cov(x, y)[0, 1]
     return (theta_xy + C3) / (theta_x * theta_y + C3)
