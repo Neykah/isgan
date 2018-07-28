@@ -1,64 +1,33 @@
 import numpy as np
-from keras import backend as K
 
-from keras.models import Sequential, Model
-from keras.layers import Dense, Activation
-from keras.layers import Conv2D, Input, MaxPooling2D, AveragePooling2D, Reshape
+from keras.models import Model
+from keras.layers import Conv2D, Input
 from keras.layers import LeakyReLU
 from keras.layers import BatchNormalization
-from keras.optimizers import Adam
 import keras.layers
 from sklearn.datasets import fetch_lfw_people
 
-from SpatialPyramidPooling import SpatialPyramidPooling
-
-def rgb2ycc(img_rgb):
-    """
-    Takes as input a RGB image and convert it to Y Cb Cr space. Shape: channels first.
-    """
-    output = np.zeros(np.shape(img_rgb))
-    output[0, :, :] = 0.299 * img_rgb[0, :, :] + 0.587 * img_rgb[1, :, :] + 0.114 * img_rgb[2, :, :]
-    output[1, :, :] = -0.1687 * img_rgb[0, :, :] - 0.3313 * img_rgb[1, :, :] + 0.5 * img_rgb[2, :, :] + 128
-    output[2, :, :] = 0.5 * img_rgb[0, :, :] - 0.4187 * img_rgb[1, :, :] + 0.0813 * img_rgb[2, :, :] + 128
-    return output
-
-
-def rgb2gray(img_rgb):
-    """
-    Transform a RGB image into a grayscale one using weighted method. Shape: channels first.
-    """
-    output = np.zeros((1, img_rgb.shape[1], img_rgb.shape[2]))
-    output[0, :, :] = 0.3 * img_rgb[0, :, :] + 0.59 * img_rgb[1, :, :] + 0.11 * img_rgb[2, :, :]
-    return output
-
-def InceptionBlock(filters_in, filters_out):
-    input_layer = Input(shape=(filters_in, 256, 256))
-    tower_filters = int(filters_out / 4)
-
-    tower_1 = Conv2D(tower_filters, 1, padding='same', activation='relu')(input_layer)
-
-    tower_2 = Conv2D(tower_filters, 1, padding='same', activation='relu')(input_layer)
-    tower_2 = Conv2D(tower_filters, 3, padding='same', activation='relu')(tower_2)
-
-    tower_3 = Conv2D(tower_filters, 1, padding='same', activation='relu')(input_layer)
-    tower_3 = Conv2D(tower_filters, 5, padding='same', activation='relu')(tower_3)
-
-    tower_4 = MaxPooling2D(tower_filters, padding='same', strides=(1, 1))(input_layer)
-    tower_4 = Conv2D(tower_filters, 1, padding='same', activation='relu')(tower_4)
-
-    concat = keras.layers.concatenate([tower_1, tower_2, tower_3, tower_4], axis=1)
-
-    res_link = Conv2D(filters_out, 1, padding='same', activation='relu')(input_layer)
-
-    output = keras.layers.add([concat, res_link])
-    output = Activation('relu')(output)
-
-    model_output = Model([input_layer], output)
-    return model_output
-
+from utils import InceptionBlock, rgb2gray, rgb2ycc, paper_loss
 
 class BaseModel(object):
     def __init__(self):
+        # Generate model
+        self.model = self.set_model()
+
+        # Compile model
+        # With MSE:
+        # self.model.compile(optimizer="adam", \
+        #               loss={'enc_Y_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
+        #               loss_weights={'enc_Y_output': 0.5, 'dec_output': 0.5})
+
+        # Or with custom loss:
+        c_loss = paper_loss(alpha=0.5, beta=0.3)
+        gamma = 0.85
+        self.model.compile(optimizer="adam", \
+                      loss={'enc_Y_output': c_loss, 'dec_output': c_loss}, \
+                      loss_weights={'enc_Y_output': 1, 'dec_output': gamma})
+
+    def set_model(self):
         # Inputs design
         # cover_input = Input(shape=(3, 256, 256), name='cover_img')   # cover in YCbCr
         secret_input = Input(shape=(1, 256, 256), name='secret_img') # secret in grayscale
@@ -120,17 +89,17 @@ class BaseModel(object):
         # Build model
         self.model = Model(inputs=[cover_Y, secret_input], outputs=[enc_Y_output, dec_output])
         self.model.summary()
-
-        # Compile model
-        self.model.compile(optimizer="adam", \
-                      loss={'enc_Y_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
-                      loss_weights={'enc_Y_output': 0.5, 'dec_output': 0.5})
         
     def train(self, epochs, batch_size=4):
         # Load the LFW dataset
         print("Loading the dataset: this step can take a few minutes.")
+        # Complete LFW dataset
         # lfw_people = fetch_lfw_people(color=True, resize=1.0, slice_=(slice(0, 250), slice(0, 250)))
-        lfw_people = fetch_lfw_people(color=True, resize=1.0, slice_=(slice(0, 250), slice(0, 250)), min_faces_per_person=10)
+
+        # Smaller dataset used for implementation evaluation
+        lfw_people = fetch_lfw_people(color=True, resize=1.0, slice_=(slice(0, 250), slice(0, 250)), \
+                                      min_faces_per_person=10)
+
         images_rgb = lfw_people.images
         images_rgb = np.moveaxis(images_rgb, -1, 1)
 
@@ -150,13 +119,12 @@ class BaseModel(object):
 
         X_train_y = np.expand_dims(X_train_ycc[:, 0, :, :], axis=1)
 
+        callback = keras.callbacks.ModelCheckpoint(\
+                   "base_model/weights.{epoch:02d}-{val_loss:.2f}.hdf5", period=1)
         self.model.fit({'cover_img_Y': X_train_y, 'secret_img': X_train_gray}, \
                        {'enc_Y_output': X_train_y, 'dec_output': X_train_gray}, \
-                       epochs=epochs, batch_size=batch_size, verbose=2)
+                       epochs=epochs, batch_size=batch_size, verbose=2, callbacks=[callback])
             
-
-
-
 
 if __name__ == "__main__":
     model = BaseModel()
