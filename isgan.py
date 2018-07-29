@@ -18,19 +18,6 @@ class ISGAN(object):
         # Generate base model
         self.base_model = self.set_base_model()
 
-        # Compile base model
-        # With MSE:
-        # self.base_model.compile(optimizer="adam", \
-        #   loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
-        #   loss_weights={'enc_output': 1.0, 'dec_output': 0.85})
-
-        # Or with custom loss:
-        # custom_loss = paper_loss(alpha=0.5, beta=0.3)
-        # gamma = 0.85
-        # self.base_model.compile(optimizer="adam", \
-        #               loss={'enc_output': custom_loss, 'dec_output': custom_loss}, \
-        #               loss_weights={'enc_output': 1, 'dec_output': gamma})
-
         # Generate discriminator model
         self.discriminator = self.set_discriminator()
 
@@ -49,17 +36,23 @@ class ISGAN(object):
         security = self.discriminator(imgs_stego)
 
         # Define a coef for the contribution of discriminator loss to total loss
-        delta = 0.5
+        delta = 0.001
         # Build and compile the adversarial model
         self.adversarial = Model(inputs=[img_cover, img_secret], \
                                  outputs=[imgs_stego, reconstructed_img, security])
 
         self.adversarial.compile(optimizer='adam', \
             loss=['mse', 'mse', 'binary_crossentropy'], \
-            loss_weights=[1.0, 1.25, 0.00])
+            loss_weights=[1.0, 0.85, delta])
+        
+        # Or with custom loss:
+        # custom_loss = paper_loss(alpha=0.5, beta=0.3)
+        # gamma = 0.85
+        # self.adversarial.compile(optimizer="adam", \
+        #               loss=[custom_loss, custom_loss, 'binary_crossentropy], \
+        #               loss_weights=[1, gamma, delta])
+        
         self.adversarial.summary()
-        self.discriminator.trainable = True
-        self.discriminator.summary()
 
     def set_base_model(self):
         # Inputs design
@@ -210,8 +203,8 @@ class ISGAN(object):
             imgs_gray = X_train_gray[idx]
 
             # Predict the generator output for these images
-            # imgs_stego, _ = self.base_model.predict([imgs_cover, imgs_gray])
-            imgs_stego, _, _ = self.adversarial.predict([imgs_cover, imgs_gray])
+            imgs_stego, _ = self.base_model.predict([imgs_cover, imgs_gray])
+            # imgs_stego, _, _ = self.adversarial.predict([imgs_cover, imgs_gray])
 
             # Train the discriminator
             d_loss_real = self.discriminator.train_on_batch(imgs_cover, original)
@@ -221,7 +214,7 @@ class ISGAN(object):
             # Train the generator
             g_loss = self.adversarial.train_on_batch([imgs_cover, imgs_gray], [imgs_cover, imgs_gray, original])
 
-            # Plot the progress
+            # Print the progress
             print("{} [D loss: {}] [G loss: {}]".format(epoch, d_loss, g_loss[0]))
 
             self.adversarial.save('adversarial.h5')
