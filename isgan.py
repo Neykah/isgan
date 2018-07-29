@@ -20,9 +20,9 @@ class ISGAN(object):
 
         # Compile base model
         # With MSE:
-        self.base_model.compile(optimizer="adam", \
-          loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
-          loss_weights={'enc_output': 0.5, 'dec_output': 0.5})
+        # self.base_model.compile(optimizer="adam", \
+        #   loss={'enc_output': 'mean_squared_error', 'dec_output': 'mean_squared_error'}, \
+        #   loss_weights={'enc_output': 1.0, 'dec_output': 0.85})
 
         # Or with custom loss:
         # custom_loss = paper_loss(alpha=0.5, beta=0.3)
@@ -53,10 +53,13 @@ class ISGAN(object):
         # Build and compile the adversarial model
         self.adversarial = Model(inputs=[img_cover, img_secret], \
                                  outputs=[imgs_stego, reconstructed_img, security])
-        self.adversarial.summary()
+
         self.adversarial.compile(optimizer='adam', \
             loss=['mse', 'mse', 'binary_crossentropy'], \
-            loss_weights=[0.5, 0.5, 0.5])
+            loss_weights=[1.0, 1.25, 0.00])
+        self.adversarial.summary()
+        self.discriminator.trainable = True
+        self.discriminator.summary()
 
     def set_base_model(self):
         # Inputs design
@@ -205,14 +208,15 @@ class ISGAN(object):
             # Idem for secret images
             idx = np.random.randint(0, X_train_ycc.shape[0], batch_size)
             imgs_gray = X_train_gray[idx]
-            imgs_stego, _ = self.base_model.predict([imgs_cover, imgs_gray])
+
+            # Predict the generator output for these images
+            # imgs_stego, _ = self.base_model.predict([imgs_cover, imgs_gray])
+            imgs_stego, _, _ = self.adversarial.predict([imgs_cover, imgs_gray])
 
             # Train the discriminator
-            self.discriminator.trainable = True
             d_loss_real = self.discriminator.train_on_batch(imgs_cover, original)
             d_loss_encrypted = self.discriminator.train_on_batch(imgs_stego, encrypted)
             d_loss = 0.5 * np.add(d_loss_real, d_loss_encrypted)
-            self.discriminator.trainable = False
 
             # Train the generator
             g_loss = self.adversarial.train_on_batch([imgs_cover, imgs_gray], [imgs_cover, imgs_gray, original])
@@ -258,11 +262,11 @@ class ISGAN(object):
 
         for k in range(nb_images):
             # plt.imsave('images/cover_{}'.format(k), imgs_cover[k, :, :, :])
-            scipy.misc.imsave('images/cover_{}.png'.format(k), imgs_cover[k, :, :, :])
-            plt.imsave('images/secret_{}'.format(k), secret_gray[k, :, :], cmap='gray')
-            scipy.misc.imsave('images/stego_{}.png'.format(k), imgs_stego[k, :, :, :])
+            scipy.misc.imsave('images/{}_cover.png'.format(k), imgs_cover[k, :, :, :])
+            plt.imsave('images/{}_secret'.format(k), secret_gray[k, :, :], cmap='gray')
+            scipy.misc.imsave('images/{}_stego.png'.format(k), imgs_stego[k, :, :, :])
             # plt.imsave('images/stego_{}'.format(k), imgs_stego[k, :, :, :])
-            plt.imsave('images/recstr_{}'.format(k), imgs_recstr[k, :, :], cmap='gray')
+            plt.imsave('images/{}_recstr'.format(k), imgs_recstr[k, :, :], cmap='gray')
         
         print("Images drawn.")
 
